@@ -1,0 +1,94 @@
+name: Market AI
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  market-ai:
+    if: contains(github.event.comment.body, '@market-ai') && !github.event.issue.pull_request
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Reply as market AI
+        uses: actions/github-script@v9
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        with:
+          script: |
+            const issueTitle = context.payload.issue.title || "";
+            const issueBody = context.payload.issue.body || "";
+            const userComment = context.payload.comment.body || "";
+
+            const prompt = `
+            你是本项目的「市场部 AI」。
+
+            你的任务不是写代码，而是从真实用户、市场转化、文案表达、信任感、易懂性角度审查这个需求。
+
+            请用中文回复，结构固定为：
+
+            ## 市场部 AI 反馈
+
+            ### 1. 用户是否看得懂
+            用小白用户视角判断。
+
+            ### 2. 这个需求的价值
+            说明它对用户有什么用。
+
+            ### 3. 文案和表达建议
+            给出更容易理解、更有说服力的说法。
+
+            ### 4. 可能的风险
+            指出用户可能误解或卡住的地方。
+
+            ### 5. 建议给开发 AI 的任务
+            整理成 3-5 条清晰可执行的建议。
+
+            Issue 标题：
+            ${issueTitle}
+
+            Issue 内容：
+            ${issueBody}
+
+            用户评论：
+            ${userComment}
+            `;
+
+            const response = await fetch("https://api.openai.com/v1/responses", {
+              method: "POST",
+              headers: {
+                "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`,
+                "Content-Type": "application/json"
+              },
+              body: JSON.stringify({
+                model: "gpt-4.1-mini",
+                input: prompt
+              })
+            });
+
+            if (!response.ok) {
+              const errorText = await response.text();
+              throw new Error(errorText);
+            }
+
+            const data = await response.json();
+
+            const text =
+              data.output_text ||
+              (data.output || [])
+                .flatMap(item => item.content || [])
+                .filter(content => content.type === "output_text")
+                .map(content => content.text)
+                .join("\n") ||
+              "市场部 AI 没有生成可读回复。";
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: text
+            });
