@@ -14,78 +14,94 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Reply as market AI with MiniMax
-        uses: actions/github-script@v9
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Anthropic SDK
+        run: pip install anthropic
+
+      - name: Generate Market AI reply
         env:
           MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
-          MINIMAX_GROUP_ID: ${{ secrets.MINIMAX_GROUP_ID }}
+          MINIMAX_BASE_URL: ${{ secrets.MINIMAX_BASE_URL }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          USER_COMMENT: ${{ github.event.comment.body }}
+        run: |
+          python - <<'PY'
+          import os
+          import anthropic
+
+          client = anthropic.Anthropic(
+              api_key=os.environ["MINIMAX_API_KEY"],
+              base_url=os.environ["MINIMAX_BASE_URL"],
+          )
+
+          prompt = f"""
+          你是本项目的「市场部 AI」。
+
+          你的任务不是写代码，而是从真实用户、市场转化、文案表达、信任感、易懂性角度审查这个需求。
+
+          请用中文回复，结构固定为：
+
+          ## 市场部 AI 反馈
+
+          ### 1. 用户是否看得懂
+          ### 2. 这个需求的价值
+          ### 3. 文案和表达建议
+          ### 4. 可能的风险
+          ### 5. 建议给开发 AI 的任务
+
+          Issue 标题：
+          {os.environ.get("ISSUE_TITLE", "")}
+
+          Issue 内容：
+          {os.environ.get("ISSUE_BODY", "")}
+
+          用户评论：
+          {os.environ.get("USER_COMMENT", "")}
+          """
+
+          message = client.messages.create(
+              model="MiniMax-M3",
+              max_tokens=1000,
+              system="你是一个专业的市场部 AI，擅长从用户视角、转化、文案和产品价值角度提出建议。",
+              messages=[
+                  {
+                      "role": "user",
+                      "content": [
+                          {
+                              "type": "text",
+                              "text": prompt,
+                          }
+                      ],
+                  }
+              ],
+          )
+
+          texts = []
+          for block in message.content:
+              if block.type == "text":
+                  texts.append(block.text)
+
+          reply = "\n\n".join(texts).strip() or "市场部 AI 没有生成可读回复。"
+
+          with open("market-ai-reply.md", "w", encoding="utf-8") as f:
+              f.write(reply)
+          PY
+
+      - name: Comment on issue
+        uses: actions/github-script@v9
         with:
           script: |
-            const issueTitle = context.payload.issue.title || "";
-            const issueBody = context.payload.issue.body || "";
-            const userComment = context.payload.comment.body || "";
-
-            const prompt = `
-            你是本项目的「市场部 AI」。
-
-            请从真实用户、市场转化、文案表达、信任感、易懂性角度审查这个需求。
-
-            回复结构：
-
-            ## 市场部 AI 反馈
-
-            ### 1. 用户是否看得懂
-            ### 2. 这个需求的价值
-            ### 3. 文案和表达建议
-            ### 4. 可能的风险
-            ### 5. 建议给开发 AI 的任务
-
-            Issue 标题：
-            ${issueTitle}
-
-            Issue 内容：
-            ${issueBody}
-
-            用户评论：
-            ${userComment}
-            `;
-
-            const groupId = process.env.MINIMAX_GROUP_ID;
-            const url = `https://api.minimax.chat/v1/text/chatcompletion_v2?GroupId=${groupId}`;
-
-            const response = await fetch(url, {
-              method: "POST",
-              headers: {
-                "Authorization": `Bearer ${process.env.MINIMAX_API_KEY}`,
-                "Content-Type": "application/json"
-              },
-              body: JSON.stringify({
-                model: "abab6.5s-chat",
-                messages: [
-                  {
-                    sender_type: "USER",
-                    text: prompt
-                  }
-                ]
-              })
-            });
-
-            if (!response.ok) {
-              const errorText = await response.text();
-              throw new Error(errorText);
-            }
-
-            const data = await response.json();
-
-            const text =
-              data?.reply ||
-              data?.choices?.[0]?.message?.content ||
-              data?.choices?.[0]?.text ||
-              JSON.stringify(data, null, 2);
+            const fs = require("fs");
+            const body = fs.readFileSync("market-ai-reply.md", "utf8");
 
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              body: text
+              body
             });
