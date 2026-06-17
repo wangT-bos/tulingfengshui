@@ -35,10 +35,9 @@ jobs:
         run: |
           python - <<'PY'
           import json
-          import http.client
           import os
+          import subprocess
           import sys
-          import urllib.parse
 
           roles = {
               "@pm-ai": {
@@ -199,23 +198,41 @@ jobs:
 
           try:
               body = json.dumps(payload).encode("utf-8")
-              parsed = urllib.parse.urlsplit(endpoint)
-              path = parsed.path or "/"
-              if parsed.query:
-                  path += "?" + parsed.query
+              with open("minimax-request.json", "wb") as f:
+                  f.write(body)
 
-              conn = http.client.HTTPSConnection(parsed.netloc, timeout=60)
-              conn.putrequest("POST", path)
-              conn.putheader("Content-Type", "application/json")
-              conn.putheader("Content-Length", str(len(body)))
-              conn.putheader("X-Api-Key", api_key)
-              conn.putheader("anthropic-version", "2023-06-01")
-              conn.endheaders(body)
+              result = subprocess.run(
+                  [
+                      "curl",
+                      "--silent",
+                      "--show-error",
+                      "--write-out",
+                      "\nHTTP_STATUS:%{http_code}",
+                      "--request",
+                      "POST",
+                      endpoint,
+                      "--header",
+                      "Content-Type: application/json",
+                      "--header",
+                      "X-Api-Key: " + api_key,
+                      "--header",
+                      "anthropic-version: 2023-06-01",
+                      "--data-binary",
+                      "@minimax-request.json",
+                  ],
+                  check=False,
+                  stdout=subprocess.PIPE,
+                  stderr=subprocess.PIPE,
+                  text=True,
+              )
+              if result.stderr:
+                  print("curl stderr:", result.stderr)
 
-              resp = conn.getresponse()
-              raw = resp.read().decode("utf-8", errors="replace")
-              if resp.status >= 400:
-                  print("HTTP status:", resp.status)
+              output = result.stdout
+              raw, _, status_text = output.rpartition("\nHTTP_STATUS:")
+              status = int(status_text.strip() or "0")
+              if status >= 400 or result.returncode != 0:
+                  print("HTTP status:", status)
                   print("HTTP response:", raw)
                   raise SystemExit(1)
           except Exception as exc:
