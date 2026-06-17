@@ -136,7 +136,11 @@ jobs:
           tag = matched[0] if matched else "@market-ai"
           role = roles[tag]
 
-          api_key = os.environ.get("MINIMAX_API_KEY", "").strip()
+          raw_api_key = os.environ.get("MINIMAX_API_KEY", "")
+          api_key = raw_api_key.strip()
+          if "ANTHROPIC_API_KEY=" in api_key:
+              api_key = api_key.split("ANTHROPIC_API_KEY=", 1)[1].splitlines()[0].strip()
+          api_key = "".join(api_key.split())
           base_url = os.environ.get("MINIMAX_BASE_URL", "").strip().rstrip("/")
 
           if not api_key:
@@ -195,6 +199,7 @@ jobs:
               headers={
                   "Content-Type": "application/json",
                   "x-api-key": api_key,
+                  "Authorization": "Bearer " + api_key,
                   "anthropic-version": "2023-06-01",
               },
               method="POST",
