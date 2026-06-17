@@ -168,9 +168,9 @@ jobs:
               base_url = "https://api.minimaxi.com/anthropic"
 
           if base_url.endswith("/v1"):
-              endpoint = base_url + "/messages"
+              endpoint_candidates = [base_url + "/messages", base_url[:-3].rstrip("/") + "/messages"]
           else:
-              endpoint = base_url + "/v1/messages"
+              endpoint_candidates = [base_url + "/v1/messages", base_url + "/messages"]
 
           sections = "\n".join(f"### {i}. {name}" for i, name in enumerate(role["sections"], 1))
           prompt = f"""
@@ -213,7 +213,7 @@ jobs:
           }
 
           print("AI role:", tag, role["name"])
-          print("MiniMax endpoint:", endpoint)
+          print("MiniMax endpoint candidates:", ", ".join(endpoint_candidates))
           print("API key exists:", bool(api_key), "length:", len(api_key))
 
           try:
@@ -221,39 +221,46 @@ jobs:
               with open("minimax-request.json", "wb") as f:
                   f.write(body)
 
-              result = subprocess.run(
-                  [
-                      "curl",
-                      "--silent",
-                      "--show-error",
-                      "--write-out",
-                      "\nHTTP_STATUS:%{http_code}",
-                      "--request",
-                      "POST",
-                      endpoint,
-                      "--header",
-                      "Content-Type: application/json",
-                      "--header",
-                      "X-Api-Key: " + api_key,
-                      "--header",
-                      "anthropic-version: 2023-06-01",
-                      "--data-binary",
-                      "@minimax-request.json",
-                  ],
-                  check=False,
-                  stdout=subprocess.PIPE,
-                  stderr=subprocess.PIPE,
-                  text=True,
-              )
-              if result.stderr:
-                  print("curl stderr:", result.stderr)
+              raw = ""
+              status = 0
+              for endpoint in endpoint_candidates:
+                  print("Trying MiniMax endpoint:", endpoint)
+                  result = subprocess.run(
+                      [
+                          "curl",
+                          "--silent",
+                          "--show-error",
+                          "--write-out",
+                          "\nHTTP_STATUS:%{http_code}",
+                          "--request",
+                          "POST",
+                          endpoint,
+                          "--header",
+                          "Content-Type: application/json",
+                          "--header",
+                          "X-Api-Key: " + api_key,
+                          "--header",
+                          "anthropic-version: 2023-06-01",
+                          "--data-binary",
+                          "@minimax-request.json",
+                      ],
+                      check=False,
+                      stdout=subprocess.PIPE,
+                      stderr=subprocess.PIPE,
+                      text=True,
+                  )
+                  if result.stderr:
+                      print("curl stderr:", result.stderr)
 
-              output = result.stdout
-              raw, _, status_text = output.rpartition("\nHTTP_STATUS:")
-              status = int(status_text.strip() or "0")
-              if status >= 400 or result.returncode != 0:
+                  output = result.stdout
+                  raw, _, status_text = output.rpartition("\nHTTP_STATUS:")
+                  status = int(status_text.strip() or "0")
+                  if status < 400 and result.returncode == 0:
+                      break
                   print("HTTP status:", status)
                   print("HTTP response:", raw)
+
+              if status >= 400 or result.returncode != 0:
                   raise SystemExit(1)
           except Exception as exc:
               print("Connection error type:", type(exc).__name__)
