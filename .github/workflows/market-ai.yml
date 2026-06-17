@@ -136,9 +136,29 @@ jobs:
           role = roles[tag]
 
           raw_api_key = os.environ.get("MINIMAX_API_KEY", "")
-          api_key = raw_api_key.strip()
-          if "ANTHROPIC_API_KEY=" in api_key:
-              api_key = api_key.split("ANTHROPIC_API_KEY=", 1)[1].splitlines()[0].strip()
+          api_key = ""
+          for line in raw_api_key.splitlines():
+              value = line.strip().strip('"').strip("'")
+              if not value or value.startswith("#"):
+                  continue
+              if "ANTHROPIC_BASE_URL=" in value or "MINIMAX_BASE_URL=" in value:
+                  continue
+              if "ANTHROPIC_API_KEY=" in value:
+                  value = value.split("ANTHROPIC_API_KEY=", 1)[1].strip()
+              elif "MINIMAX_API_KEY=" in value:
+                  value = value.split("MINIMAX_API_KEY=", 1)[1].strip()
+              elif value.lower().startswith("x-api-key:"):
+                  value = value.split(":", 1)[1].strip()
+              elif value.lower().startswith("authorization:"):
+                  value = value.split(":", 1)[1].strip()
+              if value.lower().startswith("bearer "):
+                  value = value[7:].strip()
+              api_key = value
+          if not api_key:
+              api_key = raw_api_key.strip()
+          api_key = api_key.strip().strip('"').strip("'")
+          if api_key.lower().startswith("bearer "):
+              api_key = api_key[7:].strip()
           api_key = "".join(api_key.split())
           base_url = os.environ.get("MINIMAX_BASE_URL", "").strip().rstrip("/")
 
