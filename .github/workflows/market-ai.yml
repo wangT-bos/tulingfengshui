@@ -198,7 +198,7 @@ jobs:
               data=json.dumps(payload).encode("utf-8"),
               headers={
                   "Content-Type": "application/json",
-                  "x-api-key": api_key,
+                  "X-Api-Key": api_key,
                   "Authorization": "Bearer " + api_key,
                   "anthropic-version": "2023-06-01",
               },
