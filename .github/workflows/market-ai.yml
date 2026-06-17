@@ -35,10 +35,10 @@ jobs:
         run: |
           python - <<'PY'
           import json
+          import http.client
           import os
           import sys
-          import urllib.error
-          import urllib.request
+          import urllib.parse
 
           roles = {
               "@pm-ai": {
@@ -193,30 +193,31 @@ jobs:
               ],
           }
 
-          req = urllib.request.Request(
-              endpoint,
-              data=json.dumps(payload).encode("utf-8"),
-              headers={
-                  "Content-Type": "application/json",
-                  "X-Api-Key": api_key,
-                  "Authorization": "Bearer " + api_key,
-                  "anthropic-version": "2023-06-01",
-              },
-              method="POST",
-          )
-
           print("AI role:", tag, role["name"])
           print("MiniMax endpoint:", endpoint)
           print("API key exists:", bool(api_key), "length:", len(api_key))
 
           try:
-              with urllib.request.urlopen(req, timeout=60) as resp:
-                  raw = resp.read().decode("utf-8")
-          except urllib.error.HTTPError as exc:
-              body = exc.read().decode("utf-8", errors="replace")
-              print("HTTP status:", exc.code)
-              print("HTTP response:", body)
-              raise
+              body = json.dumps(payload).encode("utf-8")
+              parsed = urllib.parse.urlsplit(endpoint)
+              path = parsed.path or "/"
+              if parsed.query:
+                  path += "?" + parsed.query
+
+              conn = http.client.HTTPSConnection(parsed.netloc, timeout=60)
+              conn.putrequest("POST", path)
+              conn.putheader("Content-Type", "application/json")
+              conn.putheader("Content-Length", str(len(body)))
+              conn.putheader("X-Api-Key", api_key)
+              conn.putheader("anthropic-version", "2023-06-01")
+              conn.endheaders(body)
+
+              resp = conn.getresponse()
+              raw = resp.read().decode("utf-8", errors="replace")
+              if resp.status >= 400:
+                  print("HTTP status:", resp.status)
+                  print("HTTP response:", raw)
+                  raise SystemExit(1)
           except Exception as exc:
               print("Connection error type:", type(exc).__name__)
               print("Connection error:", repr(exc))
