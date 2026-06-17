@@ -27,8 +27,9 @@ jobs:
     steps:
       - name: Generate AI role reply
         env:
-          MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
-          MINIMAX_BASE_URL: ${{ secrets.MINIMAX_BASE_URL }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          DEEPSEEK_BASE_URL: ${{ secrets.DEEPSEEK_BASE_URL }}
+          DEEPSEEK_MODEL: ${{ secrets.DEEPSEEK_MODEL }}
           ISSUE_TITLE: ${{ github.event.issue.title }}
           ISSUE_BODY: ${{ github.event.issue.body }}
           USER_COMMENT: ${{ github.event.comment.body }}
@@ -135,20 +136,16 @@ jobs:
           tag = matched[0] if matched else "@market-ai"
           role = roles[tag]
 
-          raw_api_key = os.environ.get("MINIMAX_API_KEY", "")
+          raw_api_key = os.environ.get("DEEPSEEK_API_KEY", "")
           api_key = ""
           for line in raw_api_key.splitlines():
               value = line.strip().strip('"').strip("'")
               if not value or value.startswith("#"):
                   continue
-              if "ANTHROPIC_BASE_URL=" in value or "MINIMAX_BASE_URL=" in value:
+              if "DEEPSEEK_BASE_URL=" in value:
                   continue
-              if "ANTHROPIC_API_KEY=" in value:
-                  value = value.split("ANTHROPIC_API_KEY=", 1)[1].strip()
-              elif "MINIMAX_API_KEY=" in value:
-                  value = value.split("MINIMAX_API_KEY=", 1)[1].strip()
-              elif value.lower().startswith("x-api-key:"):
-                  value = value.split(":", 1)[1].strip()
+              if "DEEPSEEK_API_KEY=" in value:
+                  value = value.split("DEEPSEEK_API_KEY=", 1)[1].strip()
               elif value.lower().startswith("authorization:"):
                   value = value.split(":", 1)[1].strip()
               if value.lower().startswith("bearer "):
@@ -160,17 +157,18 @@ jobs:
           if api_key.lower().startswith("bearer "):
               api_key = api_key[7:].strip()
           api_key = "".join(api_key.split())
-          base_url = os.environ.get("MINIMAX_BASE_URL", "").strip().rstrip("/")
+          base_url = os.environ.get("DEEPSEEK_BASE_URL", "").strip().rstrip("/")
+          model = os.environ.get("DEEPSEEK_MODEL", "").strip() or "deepseek-chat"
 
           if not api_key:
-              raise SystemExit("MINIMAX_API_KEY is missing. Please add it in GitHub repository secrets.")
+              raise SystemExit("DEEPSEEK_API_KEY is missing. Please add it in GitHub repository secrets.")
           if not base_url:
-              base_url = "https://api.minimaxi.com/anthropic"
+              base_url = "https://api.deepseek.com"
 
-          if base_url.endswith("/v1"):
-              endpoint_candidates = [base_url + "/messages", base_url[:-3].rstrip("/") + "/messages"]
+          if base_url.endswith("/chat/completions"):
+              endpoint = base_url
           else:
-              endpoint_candidates = [base_url + "/v1/messages", base_url + "/messages"]
+              endpoint = base_url + "/chat/completions"
 
           sections = "\n".join(f"### {i}. {name}" for i, name in enumerate(role["sections"], 1))
           prompt = f"""
@@ -196,71 +194,61 @@ jobs:
           """
 
           payload = {
-              "model": "MiniMax-M3",
+              "model": model,
               "max_tokens": 1200,
-              "system": role["system"],
               "messages": [
                   {
+                      "role": "system",
+                      "content": role["system"],
+                  },
+                  {
                       "role": "user",
-                      "content": [
-                          {
-                              "type": "text",
-                              "text": prompt,
-                          }
-                      ],
+                      "content": prompt,
                   }
               ],
           }
 
           print("AI role:", tag, role["name"])
-          print("MiniMax endpoint candidates:", ", ".join(endpoint_candidates))
+          print("DeepSeek endpoint:", endpoint)
+          print("DeepSeek model:", model)
           print("API key exists:", bool(api_key), "length:", len(api_key))
 
           try:
               body = json.dumps(payload).encode("utf-8")
-              with open("minimax-request.json", "wb") as f:
+              with open("deepseek-request.json", "wb") as f:
                   f.write(body)
 
-              raw = ""
-              status = 0
-              for endpoint in endpoint_candidates:
-                  print("Trying MiniMax endpoint:", endpoint)
-                  result = subprocess.run(
-                      [
-                          "curl",
-                          "--silent",
-                          "--show-error",
-                          "--write-out",
-                          "\nHTTP_STATUS:%{http_code}",
-                          "--request",
-                          "POST",
-                          endpoint,
-                          "--header",
-                          "Content-Type: application/json",
-                          "--header",
-                          "X-Api-Key: " + api_key,
-                          "--header",
-                          "anthropic-version: 2023-06-01",
-                          "--data-binary",
-                          "@minimax-request.json",
-                      ],
-                      check=False,
-                      stdout=subprocess.PIPE,
-                      stderr=subprocess.PIPE,
-                      text=True,
-                  )
-                  if result.stderr:
-                      print("curl stderr:", result.stderr)
+              result = subprocess.run(
+                  [
+                      "curl",
+                      "--silent",
+                      "--show-error",
+                      "--write-out",
+                      "\nHTTP_STATUS:%{http_code}",
+                      "--request",
+                      "POST",
+                      endpoint,
+                      "--header",
+                      "Content-Type: application/json",
+                      "--header",
+                      "Authorization: Bearer " + api_key,
+                      "--data-binary",
+                      "@deepseek-request.json",
+                  ],
+                  check=False,
+                  stdout=subprocess.PIPE,
+                  stderr=subprocess.PIPE,
+                  text=True,
+              )
+              if result.stderr:
+                  print("curl stderr:", result.stderr)
 
-                  output = result.stdout
-                  raw, _, status_text = output.rpartition("\nHTTP_STATUS:")
-                  status = int(status_text.strip() or "0")
-                  if status < 400 and result.returncode == 0:
-                      break
+              output = result.stdout
+              raw, _, status_text = output.rpartition("\nHTTP_STATUS:")
+              status = int(status_text.strip() or "0")
+              if status >= 400 or result.returncode != 0:
                   print("HTTP status:", status)
                   print("HTTP response:", raw)
-
-              if status >= 400 or result.returncode != 0:
                   raise SystemExit(1)
           except Exception as exc:
               print("Connection error type:", type(exc).__name__)
@@ -268,12 +256,7 @@ jobs:
               raise
 
           data = json.loads(raw)
-          texts = []
-          for item in data.get("content", []):
-              if item.get("type") == "text":
-                  texts.append(item.get("text", ""))
-
-          reply = "\n\n".join(texts).strip()
+          reply = data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
           if not reply:
               reply = "AI 已返回，但没有解析到文本内容：\n\n```json\n" + json.dumps(data, ensure_ascii=False, indent=2) + "\n```"
 
