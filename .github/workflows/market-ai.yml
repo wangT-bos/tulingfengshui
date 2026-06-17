@@ -37,6 +37,7 @@ jobs:
           python - <<'PY'
           import json
           import os
+          import re
           import subprocess
           import sys
 
@@ -157,6 +158,9 @@ jobs:
           if api_key.lower().startswith("bearer "):
               api_key = api_key[7:].strip()
           api_key = "".join(api_key.split())
+          key_match = re.search(r"sk-[A-Za-z0-9_-]+", api_key)
+          if key_match:
+              api_key = key_match.group(0)
           base_url = os.environ.get("DEEPSEEK_BASE_URL", "").strip().rstrip("/")
           model = os.environ.get("DEEPSEEK_MODEL", "").strip() or "deepseek-chat"
 
