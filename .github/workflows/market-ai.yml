@@ -166,9 +166,12 @@ jobs:
               base_url = "https://api.deepseek.com"
 
           if base_url.endswith("/chat/completions"):
-              endpoint = base_url
+              endpoint_candidates = [base_url]
           else:
-              endpoint = base_url + "/chat/completions"
+              endpoint_candidates = [
+                  base_url + "/chat/completions",
+                  base_url + "/v1/chat/completions",
+              ]
 
           sections = "\n".join(f"### {i}. {name}" for i, name in enumerate(role["sections"], 1))
           prompt = f"""
@@ -209,46 +212,54 @@ jobs:
           }
 
           print("AI role:", tag, role["name"])
-          print("DeepSeek endpoint:", endpoint)
+          print("DeepSeek endpoint candidates:", ", ".join(endpoint_candidates))
           print("DeepSeek model:", model)
           print("API key exists:", bool(api_key), "length:", len(api_key))
+          print("API key format: ascii=", api_key.isascii(), "starts_with_sk=", api_key.startswith("sk-"))
 
           try:
               body = json.dumps(payload).encode("utf-8")
               with open("deepseek-request.json", "wb") as f:
                   f.write(body)
 
-              result = subprocess.run(
-                  [
-                      "curl",
-                      "--silent",
-                      "--show-error",
-                      "--write-out",
-                      "\nHTTP_STATUS:%{http_code}",
-                      "--request",
-                      "POST",
-                      endpoint,
-                      "--header",
-                      "Content-Type: application/json",
-                      "--header",
-                      "Authorization: Bearer " + api_key,
-                      "--data-binary",
-                      "@deepseek-request.json",
-                  ],
-                  check=False,
-                  stdout=subprocess.PIPE,
-                  stderr=subprocess.PIPE,
-                  text=True,
-              )
-              if result.stderr:
-                  print("curl stderr:", result.stderr)
+              raw = ""
+              status = 0
+              for endpoint in endpoint_candidates:
+                  print("Trying DeepSeek endpoint:", endpoint)
+                  result = subprocess.run(
+                      [
+                          "curl",
+                          "--silent",
+                          "--show-error",
+                          "--write-out",
+                          "\nHTTP_STATUS:%{http_code}",
+                          "--request",
+                          "POST",
+                          endpoint,
+                          "--header",
+                          "Content-Type: application/json",
+                          "--header",
+                          "Authorization: Bearer " + api_key,
+                          "--data-binary",
+                          "@deepseek-request.json",
+                      ],
+                      check=False,
+                      stdout=subprocess.PIPE,
+                      stderr=subprocess.PIPE,
+                      text=True,
+                  )
+                  if result.stderr:
+                      print("curl stderr:", result.stderr)
 
-              output = result.stdout
-              raw, _, status_text = output.rpartition("\nHTTP_STATUS:")
-              status = int(status_text.strip() or "0")
-              if status >= 400 or result.returncode != 0:
+                  output = result.stdout
+                  raw, _, status_text = output.rpartition("\nHTTP_STATUS:")
+                  status = int(status_text.strip() or "0")
+                  if status < 400 and result.returncode == 0:
+                      break
                   print("HTTP status:", status)
                   print("HTTP response:", raw)
+
+              if status >= 400 or result.returncode != 0:
                   raise SystemExit(1)
           except Exception as exc:
               print("Connection error type:", type(exc).__name__)
